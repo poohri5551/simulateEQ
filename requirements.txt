@@ -8,4 +8,5 @@ matplotlib>=3.7.0
 scipy>=1.10.0
 pykrige>=1.7.2
 firebase-admin>=6.0.0
-google-api-python-client google-auth
+google-api-python-client 
+google-auth
