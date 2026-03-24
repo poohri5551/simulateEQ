@@ -1,0 +1,79 @@
+{
+  "n_rows": 587,
+  "feature_columns_raw": [
+    "dist",
+    "pga",
+    "mag",
+    "lat",
+    "lon"
+  ],
+  "feature_columns_engineered": [
+    "dist",
+    "pga",
+    "log_dist",
+    "log_pga",
+    "inv_dist",
+    "dist_sq",
+    "log_dist_sq",
+    "pga_over_dist",
+    "mag",
+    "mag_x_log_dist",
+    "mag_x_log_pga",
+    "mag_over_log_dist1p",
+    "lat",
+    "lon",
+    "lat_lon"
+  ],
+  "best_model_name": "hgb_reg",
+  "selection_metric": "cv_mae",
+  "best_cv_mae": 0.6169458526993106,
+  "cv_strategy": "GroupKFold(5) by event_id",
+  "all_results": {
+    "rf_reg": {
+      "cv_mae": 0.6232405166037944,
+      "cv_rmse": 0.7907338546001449,
+      "cv_accuracy_pm1": 0.9182282793867121,
+      "cv_accuracy_exact": 0.5417376490630323,
+      "best_params": {
+        "n_estimators": 700,
+        "min_samples_split": 2,
+        "min_samples_leaf": 1,
+        "max_features": 0.8,
+        "max_depth": 8
+      },
+      "best_search_score": -0.6231000195628311,
+      "cv_strategy": "GroupKFold(5) by event_id"
+    },
+    "et_reg": {
+      "cv_mae": 0.6230680830948135,
+      "cv_rmse": 0.7924527281648428,
+      "cv_accuracy_pm1": 0.9063032367972743,
+      "cv_accuracy_exact": 0.5877342419080068,
+      "best_params": {
+        "n_estimators": 700,
+        "min_samples_split": 5,
+        "min_samples_leaf": 8,
+        "max_features": "sqrt",
+        "max_depth": 8
+      },
+      "best_search_score": -0.6229446190680955,
+      "cv_strategy": "GroupKFold(5) by event_id"
+    },
+    "hgb_reg": {
+      "cv_mae": 0.6169458526993106,
+      "cv_rmse": 0.8261028684564955,
+      "cv_accuracy_pm1": 0.9148211243611585,
+      "cv_accuracy_exact": 0.524701873935264,
+      "best_params": {
+        "min_samples_leaf": 5,
+        "max_iter": 500,
+        "max_depth": 4,
+        "learning_rate": 0.03,
+        "l2_regularization": 0.1
+      },
+      "best_search_score": -0.616815202444044,
+      "cv_strategy": "GroupKFold(5) by event_id"
+    }
+  },
+  "note": "Tuned regression with randomized search."
+}

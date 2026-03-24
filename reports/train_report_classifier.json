@@ -1,0 +1,69 @@
+{
+  "n_rows": 587,
+  "raw_columns": [
+    "lat",
+    "lon",
+    "dist ",
+    "pga ",
+    "mmi",
+    "mag",
+    "source_file",
+    "pga",
+    "dist",
+    "Unnamed: 5",
+    "lat ",
+    3.5,
+    "event_id",
+    "mmi_roman"
+  ],
+  "feature_columns_raw": [
+    "dist",
+    "pga",
+    "mag",
+    "lat",
+    "lon"
+  ],
+  "feature_columns_engineered": [
+    "dist",
+    "pga",
+    "log_dist",
+    "log_pga",
+    "inv_dist",
+    "dist_sq",
+    "log_dist_sq",
+    "pga_over_dist",
+    "mag",
+    "mag_x_log_dist",
+    "mag_x_log_pga",
+    "mag_over_log_dist1p",
+    "lat",
+    "lon",
+    "lat_lon"
+  ],
+  "best_model_name": "rf_cls",
+  "best_cv_accuracy_exact": 0.5826235093696763,
+  "all_results": {
+    "rf_cls": {
+      "cv_strategy": "StratifiedKFold(5)",
+      "cv_mae": 0.5689948892674617,
+      "cv_rmse": 0.9537873934073715,
+      "cv_accuracy_pm1": 0.8637137989778535,
+      "cv_accuracy_exact": 0.5826235093696763
+    },
+    "et_cls": {
+      "cv_strategy": "StratifiedKFold(5)",
+      "cv_mae": 0.6081771720613288,
+      "cv_rmse": 0.9845484268282678,
+      "cv_accuracy_pm1": 0.8534923339011925,
+      "cv_accuracy_exact": 0.5536626916524702
+    },
+    "hgb_cls": {
+      "cv_strategy": "StratifiedKFold(5)",
+      "cv_mae": 0.5775127768313458,
+      "cv_rmse": 0.9653273535381284,
+      "cv_accuracy_pm1": 0.8568994889267462,
+      "cv_accuracy_exact": 0.5809199318568995
+    }
+  },
+  "note": "Classifier-based training for improving exact MMI accuracy."
+}

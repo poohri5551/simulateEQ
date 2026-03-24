@@ -1,0 +1,33 @@
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+winget install Cloudflare.cloudflared -e
+cloudflared tunnel --url http://localhost:8000
+
+python train_mmi_from_excel.py --excel "C:\project\Eq odd event" --model-name rf --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report.json"
+
+
+วิธีรัน Classifier
+ให้รันเหมือนเดิมได้เลย เพราะตอนนี้มันจะอ่านทั้ง .xlsx, .xls, .csv ในโฟลเดอร์นี้ทั้งหมด
+
+python train_mmi_classifier.py --excel "C:\project\Eq odd event" --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report_classifier.json"
+ถ้าอยากลอง “เฉพาะ CSV ตัวนี้อย่างเดียว”
+
+อันนี้ผมแนะนำให้ลองด้วย เพราะจะได้รู้ชัดว่าไฟล์ data_all.csv ช่วยจริงไหม
+
+python train_mmi_classifier.py --excel "C:\project\Eq odd event\data_all.csv" --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report_classifier.json"
+
+
+
+รันแบบนี้ได้เลย: REGRESSION
+
+python train_mmi_regression.py --excel "C:\project\Eq odd event" --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report_regression.json"
+python train_mmi_regression.py --excel "C:\project\Eq odd event" --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report_regression.json"
+หรือถ้าอยากลองเฉพาะ data_all.csv:
+
+python train_mmi_regression.py --excel "C:\project\Eq odd event\data_all.csv" --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report_regression.json"
+
+
+tuned classifier
+python train_mmi_classifier_tuned.py --excel "C:\project\Eq odd event" --n-iter 25 --out-model "app\models\mmi_model.joblib" --out-report "reports\train_report_classifier_tuned.json"
+tuned regression
+python train_mmi_regression_tuned.py --excel "C:\project\Eq odd event" --n-iter 25 --out-model "app\models\mmi_model_reg.joblib" --out-report "reports\train_report_regression_tuned.json"

@@ -1,0 +1,77 @@
+{
+  "n_rows": 587,
+  "raw_columns": [
+    "lat",
+    "lon",
+    "dist ",
+    "pga ",
+    "mmi",
+    "mag",
+    "source_file",
+    "pga",
+    "dist",
+    "Unnamed: 5",
+    "lat ",
+    3.5,
+    "event_id",
+    "mmi_roman"
+  ],
+  "feature_columns_raw": [
+    "dist",
+    "pga",
+    "mag",
+    "lat",
+    "lon"
+  ],
+  "feature_columns_engineered": [
+    "dist",
+    "pga",
+    "log_dist",
+    "log_pga",
+    "inv_dist",
+    "dist_sq",
+    "log_dist_sq",
+    "pga_over_dist",
+    "mag",
+    "mag_x_log_dist",
+    "mag_x_log_pga",
+    "mag_over_log_dist1p",
+    "lat",
+    "lon",
+    "lat_lon"
+  ],
+  "best_model_name": "rf_reg",
+  "selection_metric": "cv_mae",
+  "best_cv_mae": 0.6329020172521024,
+  "cv_strategy": "KFold(5, shuffle=True, random_state=42)",
+  "all_results": {
+    "rf_reg": {
+      "cv_mae": 0.6329020172521024,
+      "cv_rmse": 0.8310981321117947,
+      "cv_accuracy_pm1": 0.9216354344122658,
+      "cv_accuracy_exact": 0.48211243611584326,
+      "y_pred_min": 2.306,
+      "y_pred_max": 5.888,
+      "cv_strategy": "KFold(5, shuffle=True, random_state=42)"
+    },
+    "et_reg": {
+      "cv_mae": 0.6572617019550582,
+      "cv_rmse": 0.896932780495498,
+      "cv_accuracy_pm1": 0.8858603066439523,
+      "cv_accuracy_exact": 0.48211243611584326,
+      "y_pred_min": 2.0,
+      "y_pred_max": 7.0,
+      "cv_strategy": "KFold(5, shuffle=True, random_state=42)"
+    },
+    "hgb_reg": {
+      "cv_mae": 0.642569452570408,
+      "cv_rmse": 0.8469402603538029,
+      "cv_accuracy_pm1": 0.9216354344122658,
+      "cv_accuracy_exact": 0.4787052810902896,
+      "y_pred_min": 2.219784894554728,
+      "y_pred_max": 6.6766356334752945,
+      "cv_strategy": "KFold(5, shuffle=True, random_state=42)"
+    }
+  },
+  "note": "Regression training for MMI. Use cv_mae as main selection metric; check cv_accuracy_exact and cv_accuracy_pm1 as secondary metrics."
+}

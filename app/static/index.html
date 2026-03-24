@@ -1,0 +1,1718 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <title>SHAKEMAP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+
+  <!-- Fonts & Leaflet CSS -->
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin />
+  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+  <!-- ซ่อน/แสดงปุ่ม ops-only + เสริมเล็กน้อย -->
+  <style>
+    .ops-only { display: none !important; }
+    .ops-mode .ops-only { display: inline-flex !important; }
+
+    .mmi-chip{
+      display:inline-block; padding:6px 10px; border-radius:10px; font-weight:700;
+      box-shadow: inset 0 0 0 2px rgba(0,0,0,.08);
+      color:#000; cursor:pointer; user-select:none;
+    }
+    .mmi-sub{ display:block; font-size:16px; opacity:.9; margin-top:4px; }
+
+    .tray-toggle i{ transition:transform .18s ease; }
+    .top-right-buttons.collapsed .icon-btn:not(.tray-toggle){ display:none; }
+
+    /* 🔍 เพิ่มสไตล์สำหรับค้นหาในโมดอลจำลอง */
+    .sim-tools .row { display:flex; gap:8px; }
+    .sim-tools input[type="text"]{ flex:1; }
+    .sim-results{
+      margin-top:8px; max-height:200px; overflow:auto;
+      border:1px solid #e5e8ee; border-radius:10px; display:none; background:#fff;
+    }
+    .sim-results .item{
+      padding:8px 10px; border-bottom:1px dashed #eee; cursor:pointer;
+    }
+    .sim-results .item:last-child{ border-bottom:0; }
+    .sim-results .item:hover{ background:rgba(0,0,0,.04); }
+    .btn-outline { padding:8px 12px; border-radius:12px; background:transparent; border:1px dashed #b6bed0; cursor:pointer; }
+    .hint { color:#667085; }
+  </style>
+
+  <!-- Firebase (Compat v9) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+  <script>
+  let reportUserLocation = null;
+
+  const REPORT_MMI_OPTIONS = [
+    { value: 1,  code: "I",    feeling: "ไม่รู้สึก" },
+    { value: 2,  code: "II",   feeling: "บางคนที่อยู่นิ่ง ๆ อาจเริ่มรู้สึก" },
+    { value: 3,  code: "III",  feeling: "รู้สึกได้ชัดขึ้น คล้ายรถบรรทุกวิ่งผ่าน" },
+    { value: 4,  code: "IV",   feeling: "คนจำนวนมากรู้สึก ของแขวนเริ่มแกว่ง" },
+    { value: 5,  code: "V",    feeling: "รู้สึกชัดเจน ของเล็ก ๆ ขยับ/ตกได้" },
+    { value: 6,  code: "VI",   feeling: "แรง เริ่มวิ่งหนีออกจากอาคาร" },
+    { value: 7,  code: "VII",  feeling: "แรงมาก ยืนลำบาก อาคารเริ่มเสียหาย" },
+    { value: 8,  code: "VIII", feeling: "รุนแรงมาก ความเสียหายชัดเจน" },
+    { value: 9,  code: "IX",   feeling: "รุนแรงมาก อาคารเสียหายหนัก" },
+    { value: 10, code: "X",    feeling: "รุนแรงที่สุด อาคารพังถล่มได้" }
+  ];
+
+  function distanceKm(lat1, lon1, lat2, lon2){
+    const R = 6371;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat/2)**2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function getSelectedReportMMI(){
+    const sel = document.getElementById('reportMMISelect');
+    if (!sel || !sel.value) return null;
+    return REPORT_MMI_OPTIONS.find(x => x.value === Number(sel.value)) || null;
+  }
+
+  function updateMMISelectHint(){
+  const hint = document.getElementById('mmiSelectedHint');
+  const select = document.getElementById('reportMMISelect');
+  const selected = getSelectedReportMMI();
+
+  if (!hint || !select) return;
+
+  for (let i = 0; i <= 10; i++) {
+    hint.classList.remove(`mmi-level-${i}`);
+    select.classList.remove(`mmi-level-${i}`);
+  }
+
+  if (selected) {
+    const level = Number(selected.value) || 0;
+
+    select.classList.add(`mmi-level-${level}`);
+    hint.classList.add(`mmi-level-${level}`);
+
+    hint.innerHTML = `
+      <strong>${selected.code} / MMI ${selected.value}</strong><br>
+      <span>${selected.feeling}</span>
+    `;
+  } else {
+    select.classList.add('mmi-level-0');
+    hint.classList.add('mmi-level-0');
+    hint.textContent = 'กรุณาเลือก MMI ที่คุณรู้สึกได้';
+  }
+}
+
+  function fillMMIDropdown(){
+    const sel = document.getElementById('reportMMISelect');
+    if (!sel) return;
+
+    sel.innerHTML = `
+      <option value="">-- เลือก MMI --</option>
+      ${REPORT_MMI_OPTIONS.map(o =>
+        `<option value="${o.value}">${o.code} / MMI ${o.value} — ${o.feeling}</option>`
+      ).join('')}
+    `;
+  }
+
+  function requestUserLocation(){
+    const latlonEl = document.getElementById('reportUserLatLon');
+    const hint = document.getElementById('mmiSelectedHint');
+
+    reportUserLocation = null;
+    latlonEl.value = 'กำลังขอตำแหน่งจากอุปกรณ์...';
+
+    if (!navigator.geolocation) {
+      latlonEl.value = 'อุปกรณ์นี้ไม่รองรับการระบุตำแหน่ง';
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        reportUserLocation = { lat, lon };
+        latlonEl.value = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+      },
+      (err) => {
+        console.error(err);
+        latlonEl.value = 'ไม่สามารถดึงตำแหน่งได้';
+        if (hint) hint.textContent = 'กรุณาอนุญาตการเข้าถึงตำแหน่งของอุปกรณ์ก่อนบันทึก';
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  }
+
+  function openReportMMIModal(){
+    if (!lastPGAData || !lastPGAData.meta || !lastEpicenter) {
+      toast('กรุณาโหลดเหตุการณ์ล่าสุดก่อน', true);
+      return;
+    }
+
+    const modal = document.getElementById('reportMMIModal');
+    const eventInfo = document.getElementById('reportEventInfo');
+    const hint = document.getElementById('mmiSelectedHint');
+
+    const meta = lastPGAData.meta || {};
+    const eventLat = Number(lastEpicenter[0]);
+    const eventLon = Number(lastEpicenter[1]);
+
+    fillMMIDropdown();
+    document.getElementById('reportMMISelect').value = '';
+    updateMMISelectHint();
+
+    eventInfo.value =
+      `M${meta.mag ?? '-'} | Lat ${eventLat.toFixed(4)}, Lon ${eventLon.toFixed(4)} | ${meta.time_th ?? '-'} | ${meta.changwat ?? '-'}`;
+
+    hint.textContent = 'กรุณาเลือก MMI ที่คุณรู้สึกได้';
+    modal.style.display = 'flex';
+
+    requestUserLocation();
+  }
+
+  function closeReportMMIModal(){
+    const modal = document.getElementById('reportMMIModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function saveMMIReport(ev){
+    ev.preventDefault();
+
+    const selectedReportMMI = getSelectedReportMMI();
+
+    if (!lastPGAData || !lastPGAData.meta || !lastEpicenter) {
+      toast('ไม่พบเหตุการณ์ปัจจุบัน', true);
+      return;
+    }
+    if (!reportUserLocation) {
+      toast('ยังไม่ได้ตำแหน่งของคุณ', true);
+      return;
+    }
+    if (!selectedReportMMI) {
+      toast('กรุณาเลือก MMI', true);
+      return;
+    }
+
+    try {
+      const userLat = reportUserLocation.lat;
+      const userLon = reportUserLocation.lon;
+      const eventLat = Number(lastEpicenter[0]);
+      const eventLon = Number(lastEpicenter[1]);
+      const meta = lastPGAData.meta || {};
+
+      let estimatedPga = null;
+      const pgaObj = findNearestPGA(userLat, userLon, 8);
+      if (pgaObj && isFinite(pgaObj.pga)) estimatedPga = Number(pgaObj.pga);
+
+      const payload = {
+  user_uid: (typeof currentUser !== 'undefined' && currentUser?.uid) ? currentUser.uid : null,
+
+  user_lat: userLat,
+  user_lon: userLon,
+
+  mmi_value: selectedReportMMI.value,
+      mmi_code: selectedReportMMI.code,
+      feeling_text: selectedReportMMI.feeling,
+
+      event_time_th: meta.time_th || null,
+      event_time_utc: meta.time_utc || null,
+      event_lat: eventLat,
+      event_lon: eventLon,
+      event_mag: meta.mag ?? null,
+      event_depth_km: meta.depth_km ?? meta.depth ?? null,
+      event_changwat: meta.changwat || null,
+
+      distance_km: distanceKm(userLat, userLon, eventLat, eventLon),
+      estimated_pga_percent_g: estimatedPga,
+      source: "manual_user_report"
+    };
+
+    const res = await fetch('/api/report_mmi', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await res.json();
+
+    if (!res.ok || !result?.ok) {
+      throw new Error(result?.detail || 'บันทึกไม่สำเร็จ');
+    }
+
+    toast('บันทึกรายงาน MMI เรียบร้อยแล้ว');
+    closeReportMMIModal();
+
+    } catch (err) {
+      console.error(err);
+      toast('บันทึกไม่สำเร็จ: ' + (err.message || err), true);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('reportMMIBtn')?.addEventListener('click', openReportMMIModal);
+    document.getElementById('reportMMICancel')?.addEventListener('click', closeReportMMIModal);
+    document.getElementById('reportMMICloseX')?.addEventListener('click', closeReportMMIModal);
+    document.getElementById('reportMMIForm')?.addEventListener('submit', saveMMIReport);
+    document.getElementById('reportGetLocationBtn')?.addEventListener('click', requestUserLocation);
+    document.getElementById('reportMMISelect')?.addEventListener('change', updateMMISelectHint);
+
+    document.getElementById('reportMMIModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'reportMMIModal') closeReportMMIModal();
+    });
+  });
+</script>
+
+</head>
+<body>
+  <script>
+// ===== รายการตัวเลือกสากลเวลาบรรเทาภัยพิบัติ =====
+const NEED_OPTIONS = [
+  {value:'medical',     label:'การแพทย์/ยา'},
+  {value:'food',        label:'อาหาร/เสบียง'},
+  {value:'water',       label:'น้ำดื่ม'},
+  {value:'shelter',     label:'ที่พักพิง/ผ้าห่ม'},
+  {value:'rescue',      label:'ค้นหาและกู้ภัย'},
+  {value:'evac',        label:'อพยพ/ขนย้าย'},
+  {value:'power',       label:'ไฟฟ้า/ชาร์จไฟ'},
+  {value:'comms',       label:'การสื่อสาร/สัญญาณ'},
+  {value:'sanitation',  label:'สุขอนามัย/ห้องน้ำ'},
+  {value:'transport',   label:'การเดินทาง/เชื้อเพลิง'},
+  {value:'special',     label:'ผู้สูงอายุ/เด็ก/ผู้พิการ'},
+  {value:'pets',        label:'สัตว์เลี้ยง/ปศุสัตว์'},
+  {value:'psych',       label:'การช่วยเหลือด้านจิตใจ'}
+];
+
+function needLabel(v){ const o = NEED_OPTIONS.find(x=>x.value===v); return o?o.label:v; }
+
+function initNeedDropdown(){
+  const dd = document.getElementById('needDropdown');
+  if(!dd) return;
+  const ul = dd.querySelector('.need-dd-list');
+  ul.innerHTML = '';
+  NEED_OPTIONS.forEach(o=>{
+    const li = document.createElement('li');
+    li.innerHTML = `<label><input type="checkbox" value="${o.value}"><span>${o.label}</span></label>`;
+    ul.appendChild(li);
+  });
+
+  // preload จาก localStorage
+  try{
+    const saved = JSON.parse(localStorage.getItem('shakemapProfile')||'{}');
+    if(saved.needs && Array.isArray(saved.needs)){
+      ul.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+        cb.checked = saved.needs.includes(cb.value);
+      });
+      updateNeedToggleText();
+    }
+  }catch(e){}
+
+  // events
+  const toggleBtn = dd.querySelector('.need-dd-toggle');
+  const search = dd.querySelector('.need-dd-search input');
+  const clearBtn = dd.querySelector('.need-dd-clear');
+  const doneBtn = dd.querySelector('.need-dd-done');
+
+  toggleBtn.addEventListener('click', ()=>{
+    const open = dd.getAttribute('data-open') === 'true';
+    dd.setAttribute('data-open', String(!open));
+    toggleBtn.setAttribute('aria-expanded', String(!open));
+  });
+
+  document.addEventListener('click', (e)=>{
+    if(!dd.contains(e.target)){
+      dd.setAttribute('data-open','false');
+      toggleBtn.setAttribute('aria-expanded','false');
+    }
+  });
+
+  ul.addEventListener('change', updateNeedToggleText);
+
+  search.addEventListener('input', ()=>{
+    const q = search.value.trim().toLowerCase();
+    ul.querySelectorAll('li').forEach(li=>{
+      const text = li.textContent.toLowerCase();
+      li.style.display = text.includes(q) ? '' : 'none';
+    });
+  });
+
+  clearBtn.addEventListener('click', ()=>{
+    ul.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
+    updateNeedToggleText();
+  });
+  doneBtn.addEventListener('click', ()=>{
+    dd.setAttribute('data-open','false');
+    toggleBtn.setAttribute('aria-expanded','false');
+  });
+}
+
+function getSelectedNeeds(){
+  const dd = document.getElementById('needDropdown');
+  if(!dd) return [];
+  return Array.from(dd.querySelectorAll('input[type=checkbox]:checked')).map(i=>i.value);
+}
+
+function updateNeedToggleText(){
+  const dd = document.getElementById('needDropdown');
+  if(!dd) return;
+  const placeholder = dd.querySelector('.need-dd-placeholder');
+  const counter = dd.querySelector('.need-dd-count');
+  const selected = getSelectedNeeds();
+  if(selected.length === 0){
+    placeholder.textContent = 'เลือกความช่วยเหลือ…';
+    counter.hidden = true;
+  }else if(selected.length <= 2){
+    placeholder.textContent = selected.map(needLabel).join(', ');
+    counter.hidden = true;
+  }else{
+    placeholder.textContent = 'เลือกแล้ว';
+    counter.hidden = false;
+    counter.textContent = selected.length;
+  }
+}
+
+/* ==== บันทึกชื่อเล่น + ความต้องการ ==== */
+function saveNicknameAndNeeds(){
+  const nickEl = document.getElementById('nicknameInput') || document.querySelector('#nickname input, #nickInput');
+  const nickname = nickEl ? nickEl.value.trim() : '';
+  const needs = getSelectedNeeds();
+
+  const profile = { nickname, needs };
+  localStorage.setItem('shakemapProfile', JSON.stringify(profile));
+
+  try{ updateUserMarkerPopup && updateUserMarkerPopup(); }catch(e){}
+  try{
+    (document.getElementById('nicknameModal') || document.querySelector('.nickname-modal'))?.classList.remove('open');
+  }catch(e){}
+}
+
+/* ==== Hook เมื่อโหลด ==== */
+document.addEventListener('DOMContentLoaded', ()=>{
+  initNeedDropdown();
+  const btn = document.getElementById('nicknameSaveBtn') || document.querySelector('.nickname-save');
+  if(btn) btn.addEventListener('click', saveNicknameAndNeeds);
+});
+</script>
+
+
+  <div class="controls">
+    <div class="controls-row">
+      <!-- Search -->
+      <div class="searchbox">
+        <input id="searchInput" type="search" placeholder="ค้นหาสถานที่" autocomplete="off" />
+        <button id="searchBtn" type="button" title="ค้นหา" aria-label="ค้นหา">
+          <i class="fa-solid fa-magnifying-glass"></i>
+        </button>
+        <ul id="acList" class="ac"></ul>
+      </div>
+
+      <!-- Nickname -->
+      <button id="nickChip" class="chip-btn" type="button" title="SOS">
+        <span id="nickChipLabel">SOS</span>
+      </button>
+
+      <!-- ปุ่มลอยขวาบน -->
+      <div class="top-right-buttons">
+        <button id="trayToggle" class="icon-btn tray-toggle" title="ซ่อนเมนู" aria-label="ซ่อนเมนู" aria-expanded="true">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+
+        <button id="reportMMIBtn" class="icon-btn" title="รายงาน MMI ของฉัน" aria-label="รายงาน MMI ของฉัน">
+          <i class="fa-solid fa-clipboard-check"></i>
+        </button>
+
+        <button id="locateBtn" class="icon-btn" title="ตำแหน่งของฉัน">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+          </svg>
+        </button>
+
+        <button id="runBtn" class="icon-btn" title="จำลองเหตุการณ์" aria-label="จำลองเหตุการณ์">
+          <i class="fa-solid fa-wave-square"></i>
+        </button>
+
+        
+
+        <button id="clearPinsBtn" class="icon-btn ops-only" title="ล้าง Pins" aria-label="ล้าง Pins">
+          <i class="fa-solid fa-trash-can"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <!-- PGA Legend -->
+  <div id="legend" class="legend" style="display:none">
+    <div class="legend-title"><strong>PGA (%g)</strong></div>
+    <div class="legend-bar"></div>
+    <div class="legend-labels"></div>
+  </div>
+
+  <!-- Modal: ตั้งชื่อเล่น -->
+  <div id="nickModal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <button type="button" id="nickCloseX" class="modal-close" aria-label="ปิด">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+
+      <h3 class="modal-title">SOS</h3>
+      <form id="nickForm" class="modal-body">
+        <div class="row">
+          <label>ชื่อเล่นของฉัน
+            <input id="nickModalInput" type="text" maxlength="24" placeholder="">
+          </label>
+        </div>
+        <!-- ต้องการความช่วยเหลือ (Dropdown แบบหลายตัวเลือก) -->
+<div class="field-group">
+  <label class="label">ต้องการความช่วยเหลือ</label>
+
+  <div id="needDropdown" class="need-dd" data-open="false">
+    <button type="button" class="need-dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+      <span class="need-dd-placeholder">เลือกความช่วยเหลือ…</span>
+      <span class="need-dd-count" hidden></span>
+      <svg class="need-dd-caret" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 10l5 5 5-5z"></path>
+      </svg>
+    </button>
+
+    <div class="need-dd-menu" role="listbox" aria-multiselectable="true">
+      <div class="need-dd-search">
+        <input type="text" placeholder="ค้นหา…">
+      </div>
+      <ul class="need-dd-list"><!-- options จะถูกเติมด้วย JS --></ul>
+      <div class="need-dd-actions">
+        <button type="button" class="need-dd-clear">ล้าง</button>
+        <button type="button" class="need-dd-done">เสร็จสิ้น</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">เลือกได้หลายรายการ</div>
+</div>
+
+        <div class="modal-actions">
+          <button type="button" id="nickCancel" class="btn-secondary">ยกเลิก</button>
+          <button type="submit" class="btn-primary">บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: จำลองเหตุการณ์ -->
+  <div id="simulateModal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <button type="button" id="simCloseX" class="modal-close" aria-label="ปิด">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+
+      <h3 class="modal-title">จำลองเหตุการณ์</h3>
+      <form id="simulateForm" class="modal-body">
+        <div class="row">
+          <label>Latitude
+            <input id="simLat" type="number" step="any" min="-90" max="90" required placeholder="เช่น 13.7563">
+          </label>
+        </div>
+        <div class="row">
+          <label>Longitude
+            <input id="simLon" type="number" step="any" min="-180" max="180" required placeholder="เช่น 100.5018">
+          </label>
+        </div>
+        <div class="row">
+          <label>Depth (km)
+            <input id="simDepth" type="number" step="0.1" min="0" max="700" required placeholder="เช่น 10">
+          </label>
+        </div>
+        <div class="row">
+          <label>Magnitude (Mw)
+            <input id="simMag" type="number" step="0.1" min="1" max="10" required placeholder="เช่น 5.5">
+          </label>
+        </div>
+
+        
+
+        <!-- 🗺️ เลือกพิกัดจากการคลิกบนแผนที่ -->
+        <div class="sim-tools" style="margin-top:10px">
+          <button type="button" id="simPickBtn" class="btn-outline">กดเพื่อเลือกพิกัดจากแผนที่</button>
+          <div class="hint" style="margin-top:6px">หลังจากกดปุ่มนี้ ให้คลิกบนแผนที่ 1 ครั้ง ระบบจะกรอก Latitude/Longitude ให้อัตโนมัติ</div>
+        </div>
+
+        <div class="modal-actions" style="margin-top:14px">
+          <button type="button" id="simCancel" class="btn-secondary">ยกเลิก</button>
+          <button type="submit" id="simSubmit" class="btn-primary">คำนวณ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <div id="reportMMIModal" class="modal-backdrop" style="display:none">
+  <div class="modal report-mmi-modal">
+    <button type="button" id="reportMMICloseX" class="modal-close" aria-label="ปิด">
+      <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+    </button>
+
+    <div class="report-mmi-header">
+      <div class="report-mmi-icon">
+        <i class="fa-solid fa-clipboard-check"></i>
+      </div>
+      <div>
+        <h3 class="modal-title report-mmi-title">รายงานความรุนแรงที่จุดของฉัน</h3>
+        <div class="report-mmi-subtitle">ส่งค่าความรู้สึกที่คุณรับรู้ได้ เพื่อช่วยยืนยันความรุนแรงของเหตุการณ์</div>
+      </div>
+    </div>
+
+    <form id="reportMMIForm" class="modal-body report-mmi-body">
+      <div class="report-card">
+        <label class="report-label">ตำแหน่งของคุณ</label>
+
+        <div class="location-inline report-location-box">
+          <input id="reportUserLatLon" type="text" readonly placeholder="ยังไม่ได้ระบุตำแหน่ง">
+          <button type="button" id="reportGetLocationBtn" class="btn-location">
+            <i class="fa-solid fa-location-crosshairs"></i>
+            <span>ใช้ตำแหน่งอุปกรณ์</span>
+          </button>
+        </div>
+
+        <div class="hint report-hint">
+          ระบบจะขออนุญาตเข้าถึงตำแหน่งจากมือถือหรืออุปกรณ์ของผู้ใช้
+        </div>
+      </div>
+
+      <div class="report-card">
+        <label class="report-label">เหตุการณ์ปัจจุบัน</label>
+        <div class="event-preview">
+          <i class="fa-solid fa-house-crack"></i>
+          <input id="reportEventInfo" type="text" readonly placeholder="ยังไม่มีเหตุการณ์บนจอ">
+        </div>
+      </div>
+
+      <div class="report-card">
+        <label for="reportMMISelect" class="report-label">เลือก MMI ที่คุณรู้สึกได้</label>
+        <select id="reportMMISelect" class="mmi-select" required>
+          <option value="">-- เลือก MMI --</option>
+        </select>
+
+        <div class="hint report-mmi-hint" id="mmiSelectedHint">
+          กรุณาเลือก MMI ที่คุณรู้สึกได้
+        </div>
+      </div>
+
+      <div class="modal-actions report-mmi-actions">
+        <button type="button" id="reportMMICancel" class="btn-secondary">ยกเลิก</button>
+        <button type="submit" id="reportMMISubmit" class="btn-primary btn-save-report">
+          <i class="fa-solid fa-floppy-disk"></i>
+          <span>บันทึก</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+  <!-- Modal: ยืนยันรหัสล้าง Pins -->
+  <div id="clearPinsModal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <h3 class="modal-title">ล้าง Pins ทั้งหมด</h3>
+      <form id="clearPinsForm" class="modal-body">
+        <div class="row">
+          <label>กรอกรหัสยืนยัน
+            <input id="clearCodeInput" type="password" autocomplete="off" placeholder="ใส่รหัส">
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="clearCancel" class="btn-secondary">ยกเลิก</button>
+          <button type="submit" id="clearConfirm" class="btn-primary">ลบเลย</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: รายละเอียด MMI -->
+  <div id="mmiModal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <h3 id="mmiModalTitle" class="modal-title">รายละเอียดความรุนแรง (MMI)</h3>
+      <div class="modal-body">
+        <div id="mmiBadge" class="mmi-chip" style="margin-bottom:8px"></div>
+        <div id="mmiDesc" class="mmi-sub"></div>
+        <div id="mmiDamage" class="mmi-sub"></div>
+        <div id="mmiAdvice" style="margin-top:10px;line-height:1.55"></div>
+        <div id="mmiRange" class="mmi-sub" style="margin-top:8px"></div>
+        <div id="mmiPGA" class="mmi-sub"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="mmiClose" class="btn-primary">ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: รอคิวเข้าใช้งาน -->
+  <div id="queueModal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <h3 class="modal-title">คนใช้งานเต็มอยู่ กำลังเข้าคิว…</h3>
+      <div class="modal-body">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div class="spinner" aria-hidden="true"></div>
+          <div id="queueText" class="queue-text">กำลังเข้าคิว…</div>
+        </div>
+        <div class="queue-metrics">
+          <div class="metric">กำลังใช้งาน: <b id="qActive">-</b></div>
+          <div class="metric">จำกัด: <b id="qLimit">10</b></div>
+        </div>
+        <div style="margin-top:8px">
+          คิวของคุณ: <span id="queuePosition" class="queue-pos">#–</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="queueLeave" class="btn-secondary">ออกจากคิว</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin></script>
+
+  <script>
+    /* === Overlay color mapping (จาก legend) === */
+    let currentLegend = null;
+
+    function hexToRgb(hex){
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex||"");
+      if(!m) return {r:0,g:0,b:0};
+      return { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) };
+    }
+
+    function colorForPGAFromLegend(pga){
+      const L = currentLegend;
+      if(!L || !L.stops || L.stops.length < 2) return '#000';
+      const min = +L.min, max = +L.max;
+      const span = (max - min) || 1e-9;
+      let t = (pga - min) / span;
+      if(!isFinite(t)) t = 0;
+      t = Math.max(0, Math.min(1, t));
+
+      const N = L.stops.length;
+      const x = t * (N - 1);
+      const i = Math.floor(x);
+      if (i >= N - 1) return L.stops[N - 1].color;
+
+      const f = x - i;
+      const c1 = hexToRgb(L.stops[i].color);
+      const c2 = hexToRgb(L.stops[i+1].color);
+      const r = Math.round(c1.r + f*(c2.r - c1.r));
+      const g = Math.round(c1.g + f*(c2.g - c1.g));
+      const b = Math.round(c1.b + f*(c2.b - c1.b));
+      return `rgb(${r},${g},${b})`;
+    }
+
+
+    /* ---------------- Helpers ---------------- */
+    function toast(msg, isError=false){
+      const t = document.getElementById('toast');
+      t.textContent = msg || '';
+      t.classList.toggle('error', !!isError);
+      t.style.display = msg ? 'block' : 'none';
+      if(msg){ clearTimeout(toast._tmr); toast._tmr = setTimeout(()=>t.style.display='none', 4000); }
+    }
+    function _esc(s){ return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+    /* ---------------- Map base ---------------- */
+    const osm  = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ maxZoom:19, attribution:'&copy; OpenStreetMap' });
+    const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{ maxZoom:19, attribution:'Tiles &copy; Esri' });
+    const baseLayers = { "OpenStreetMap": osm, "Esri World Imagery": esri };
+
+    const pgaImageGroup   = L.layerGroup();
+    const epicenterGroup  = L.layerGroup();
+    const legendLayer     = L.layerGroup();
+    const othersPinsGroup = L.layerGroup();
+
+    const map = L.map('map', {
+      center:[15,100], zoom:6,
+      layers:[osm, pgaImageGroup, epicenterGroup, othersPinsGroup]
+    });
+
+    map.createPane('pinsPane');
+    map.getPane('pinsPane').style.zIndex = 610;
+
+    const layerControl = L.control.layers(
+      baseLayers,
+      { 'PGA (Interpolation)': pgaImageGroup, 'Pins from everyone': othersPinsGroup, 'PGA Scale Bar': legendLayer }
+    ).addTo(map);
+    layerControl.setPosition('bottomright');
+    map.zoomControl.setPosition('bottomright');
+
+    /* ---------------- State ---------------- */
+    let overlayLayer=null, epicenterMarker=null, searchMarker=null, userDistanceLine=null;
+    let lastPGAData=null, lastPGAGrid=[], lastEpicenter=null;
+
+    /* ---------------- Icons ---------------- */
+    const blueIcon = L.icon({
+      iconUrl:'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-blue.png',
+      iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34]
+    });
+    const redIcon = L.icon({
+      iconUrl:'https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-red.png',
+      iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34]
+    });
+
+    /* ---------------- PGA → MMI (Worden+2012) ---------------- */
+    const PGA_THRESH = [0.05, 0.3, 2.8, 6.2, 12, 22, 40, 75, 139];
+    const MMI_CODES  = ["I","II–III","IV","V","VI","VII","VIII","IX","X","X+"];
+    const MMI_COLORS = [
+      "#efeaff","#cfd8ff","#66ccff","#6bd86b","#d6f24a",
+      "#ffe066","#ff9b40","#ff4d3a","#d8222a","#990000"
+    ];
+    const TH_SHAKING = ["ไม่รู้สึก","อ่อนมาก–อ่อน","อ่อน","ปานกลาง","ค่อนข้างแรง","แรงมาก","รุนแรง","รุนแรงมาก","รุนแรงมาก (Violent)","รุนแรงที่สุด (Extreme)"];
+    const TH_DAMAGE  = ["ไม่มี","ไม่มี","ไม่มี","มีรอยแตกของผนังและกระจกหน้าต่างบ้างเล็กน้อย","ผนัง/เพดานร่วงหล่นบางจุด หน้าต่างบานเกร็ดแตกหรือร้าว","บ้าน/ตึกแถวที่ก่อสร้างไม่ได้มาตรฐานเริ่มเสียหายหนัก (ผนังแตกร้าว, เสาปูนบางต้นร้าว)","อาคารที่สร้างไม่แข็งแรง (บ้านก่ออิฐไม่เสริมเหล็ก, ตึกแถวเก่า) เสียหายหนัก บางส่วนอาจพังทลาย","อาคาร/บ้านเรือนที่ไม่ได้ออกแบบให้ทนแผ่นดินไหวเสียหายหนัก","อาคาร/บ้านเรือนพังถล่มเกือบทั้งหมด","อาคาร/บ้านเรือนพังถล่ม"];
+
+    const MMI_ADVICE = {
+      "I":"ยังไม่จำเป็นต้องทำอะไรเป็นพิเศษ เพียงเฝ้าระวังข่าวสาร",
+      "II–III":"ยังไม่จำเป็นต้องทำอะไรเป็นพิเศษ เพียงเฝ้าระวังข่าวสาร",
+      "IV":"อยู่ให้ห่างจากของที่อาจตกหล่น เตรียมเส้นทางหนีออกจากอาคารถ้าจำเป็น",
+      "V":"อยู่ใต้โต๊ะ/ที่กำบัง ยึดของที่อาจล้ม เตรียมเส้นทางหนีออกจากอาคารถ้าจำเป็น",
+      "VI":"หลบใต้โต๊ะหรือมุมอาคารที่แข็งแรง เตรียมอพยพหากไม่ปลอดภัย",
+      "VII":"ออกจากอาคารเมื่อปลอดภัย ระวังสิ่งของตกหล่น/ไฟฟ้ารั่ว",
+      "VIII":"อพยพไปพื้นที่โล่ง หลีกเลี่ยงอาคาร สะพาน เสาไฟ",
+      "IX":"อพยพฉุกเฉินทันที ไปยังพื้นที่ปลอดภัย และช่วยเหลือผู้อื่นเมื่อปลอดภัยแล้ว",
+      "X":"อพยพฉุกเฉินทันที ไปยังพื้นที่ปลอดภัย และช่วยเหลือผู้อื่นเมื่อปลอดภัยแล้ว",
+      "X+":"อพยพด่วนที่สุด หลีกเลี่ยงพื้นที่เสี่ยงทุกชนิด"
+    };
+
+    function mmiFromAILevel(level, pred=null){
+      level = Math.max(1, Math.min(12, Math.round(Number(level) || 1)));
+
+      // MMI_CODES ของเว็บคุณเป็น ["I","II–III","IV","V","VI","VII","VIII","IX","X","X+"] 
+      let idx;
+      if (level <= 1) idx = 0;
+      else if (level <= 3) idx = 1;
+      else idx = Math.min(MMI_CODES.length - 1, level - 2); // 4->2, 5->3, ... 10->8, 11/12->9 (X+)
+
+      const rangeText = (pred != null)
+        ? `AI≈${Number(pred).toFixed(2)} → level ${level}`
+        : `AI level ${level}`;
+
+      return { idx, code:MMI_CODES[idx], color:MMI_COLORS[idx], shake:TH_SHAKING[idx], damage:TH_DAMAGE[idx], rangeText };
+    }
+
+
+    function mmiFromPGA(pgaPercentG){
+      let idx = 0; while (idx < PGA_THRESH.length && pgaPercentG >= PGA_THRESH[idx]) idx++;
+      const lower = idx === 0 ? 0 : PGA_THRESH[idx-1];
+      const upper = idx < PGA_THRESH.length ? PGA_THRESH[idx] : Infinity;
+      const rangeText = idx === 0 ? `< ${PGA_THRESH[0]}%g` : (upper === Infinity ? `≥ ${lower}%g` : `${lower}–${upper}%g`);
+      return { idx, code:MMI_CODES[idx], color:MMI_COLORS[idx], shake:TH_SHAKING[idx], damage:TH_DAMAGE[idx], rangeText };
+    }
+
+    /* ---------------- PGA Compute ---------------- */
+    function resetLatest(){
+      if (overlayLayer && pgaImageGroup.hasLayer(overlayLayer)) pgaImageGroup.removeLayer(overlayLayer);
+      overlayLayer = null;
+      if (epicenterMarker && epicenterGroup.hasLayer(epicenterMarker)) epicenterGroup.removeLayer(epicenterMarker);
+      epicenterMarker = null;
+      if (userDistanceLine && map.hasLayer(userDistanceLine)) map.removeLayer(userDistanceLine);
+      userDistanceLine = null;
+      lastPGAData=null; lastPGAGrid=[]; lastEpicenter=null;
+      const lg = document.getElementById('legend'); if (lg) lg.style.display = 'none';
+      setLegendVisible(false); if (map.hasLayer(legendLayer)) map.removeLayer(legendLayer);
+    }
+
+    
+
+    /* ---------------- Utilities ---------------- */
+    function calcDistanceKm(lat1, lon1, lat2, lon2){
+      const R=6371, toRad=x=>x*Math.PI/180;
+      const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+      return 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+    function classifySeverity(pga){
+      if (pga === 0) return { label:"ไม่มีผลกระทบ", className:"sev-none" };
+      if (pga <= 3.6) return { label:"ระดับต่ำ",  className:"sev-low" };
+      if (pga <= 9.6) return { label:"ระดับกลาง", className:"sev-mid" };
+      return { label:"ระดับสูง", className:"sev-high" };
+    }
+    function findNearestPGA(lat, lon, limitKm=8){
+      if (!lastPGAGrid.length) return null;
+      const toRad = d=>d*Math.PI/180, R=6371;
+      let best=null, bestD=Infinity;
+      for(const p of lastPGAGrid){
+        const dLat = toRad(p.lat-lat), dLon = toRad(p.lon-lon);
+        const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat))*Math.cos(toRad(p.lat))*Math.sin(dLon/2)**2;
+        const d = 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        if (d < bestD) { bestD = d; best = p; }
+      }
+      return (best && bestD <= limitKm) ? {...best, dist:bestD} : null;
+    }
+
+    /* ---------------- Popup: เฉพาะ MMI + ลิงก์รายละเอียด ---------------- */
+    /* ---------------- Popup: เฉพาะ MMI + ลิงก์รายละเอียด ---------------- */
+/* ---------------- Popup: เฉพาะ MMI + ลิงก์รายละเอียด ---------------- */
+/* ---------------- Popup: เฉพาะ MMI + ลิงก์รายละเอียด ---------------- */
+
+
+// ================= Soil (Vs30 / NEHRP Site Class) =================
+// จะถูกเติมค่าจาก backend: GET /api/soil?lat=..&lon=..
+let lastSoilInfo = null;
+let __soilReqId = 0;
+
+async function refreshSoilForMarker(){
+  if (!searchMarker) return;
+  const { lat, lng } = searchMarker.getLatLng();
+  const rid = ++__soilReqId;
+  lastSoilInfo = { status: 'loading', lat, lon: lng };
+  updateUserMarkerPopup();
+  try{
+    const res = await fetch(`/api/soil?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`);
+    const js = await res.json();
+    if (rid !== __soilReqId) return;
+    lastSoilInfo = js;
+  }catch(e){
+    if (rid !== __soilReqId) return;
+    lastSoilInfo = { status: 'error', error: (e && (e.message||String(e))) || 'error', lat, lon: lng };
+  }
+  updateUserMarkerPopup();
+}
+
+function updateUserMarkerPopup(){
+  if (!searchMarker) return;
+
+  const latlng = searchMarker.getLatLng();
+  let popup = searchMarker.options.title || '';
+
+  if (lastEpicenter && latlng){
+    const dist = calcDistanceKm(latlng.lat, latlng.lng, lastEpicenter[0], lastEpicenter[1]);
+    popup += `<br><span>ระยะห่างจากจุดศูนย์กลาง : <b>${dist.toFixed(2)}</b> กม.</span>`;
+
+    if (lastPGAGrid.length){
+      const pgaObj = findNearestPGA(latlng.lat, latlng.lng, 8);
+      const pgaVal = (pgaObj && isFinite(pgaObj.pga) && pgaObj.pga > 0) ? pgaObj.pga : 0;
+
+      const sev = classifySeverity(pgaVal);
+        let m;
+        if (pgaObj && typeof pgaObj.mmi_level === 'number') {
+          m = mmiFromAILevel(pgaObj.mmi_level, pgaObj.mmi_pred);
+        } else {
+          m = mmiFromPGA(pgaVal);
+        }
+
+      const mmiOverlayColor = colorForPGAFromLegend(pgaVal);
+
+      // ถ้า MMI เป็น I หรือ II–III ให้ใช้ "สีน้ำเงินของ MMI IV" แทน เพื่อให้อ่านง่าย
+      const MMI_IV_COLOR = (typeof MMI_COLORS !== 'undefined' && MMI_COLORS[2]) || '#66ccff';
+      const textColor = (m.code === 'I' || m.code === 'II–III') ? MMI_IV_COLOR : m.color;
+
+      // ค่า PGA (%g) และข้อความ "ระดับการสั่นสะเทือน" ใช้ textColor ตามกฎข้างบน
+      popup += `<br><span>ค่าระดับการสั่นสะเทือน : <b style="color:${textColor}">${pgaVal.toFixed(4)}</b> %g</span>`;
+      popup += `<br><span style="color:${textColor}; font-weight:700">ระดับการสั่นสะเทือน : ${sev.label}</span>`;
+
+      // ป้าย MMI (ยังคงใช้สีจริงของ MMI) + เฉดสี overlay
+      popup += `
+        <br><span>MMI :
+          <a href="#"
+             onclick="return showMMIDetail('${m.code}', ${Number(pgaVal).toFixed(6)})"
+             class="mmi-chip"
+             style="background:${m.color}; text-decoration:none;">
+            ${m.code}
+          </a>
+          <span class="pga-chip" style="background:${mmiOverlayColor}" title="เฉดสีแผนที่"></span>
+        </span>
+      `;
+
+      // แสดงความต้องการช่วยเหลือ (ถ้ามี)
+      try{
+        const profile = JSON.parse(localStorage.getItem('shakemapProfile')||'{}');
+        if (profile.needs && profile.needs.length){
+          const chips = profile.needs.map(v=>`<span class="need-chip">${needLabel(v)}</span>`).join(' ');
+          popup += `<br><span>ต้องการความช่วยเหลือ : ${chips}</span>`;
+        }
+      }catch(e){}
+    }
+  }
+
+  
+
+// ---- ชั้นดิน (Vs30 / Site Class) ----
+if (lastSoilInfo){
+  if (lastSoilInfo.status === 'loading'){
+    popup += `<br><span>ชั้นดิน : <i>กำลังค้นหา...</i></span>`;
+  }else if (lastSoilInfo.status === 'error'){
+    popup += `<br><span>ชั้นดิน : <i style="color:#b00">ค้นหาไม่สำเร็จ</i></span>`;
+  }else if (lastSoilInfo.site_class){
+    const sc = _esc(lastSoilInfo.site_class);
+    const desc = _esc(lastSoilInfo.desc_th || '');
+    const vs30 = (lastSoilInfo.vs30_ms ? Number(lastSoilInfo.vs30_ms).toFixed(0) : '');
+    popup += `<br><span>ชั้นดิน (Site Class) : <b>${sc}</b>${desc ? ' — '+desc : ''}${vs30 ? ` <small>(Vs30≈${vs30} m/s)</small>` : ''}</span>`;
+  }else{
+    popup += `<br><span>ชั้นดิน : <i>ไม่พบข้อมูล</i></span>`;
+  }
+}else{
+  popup += `<br><span>ชั้นดิน : <i>ยังไม่ได้ค้นหา</i></span>`;
+}
+  searchMarker.getPopup()?.setContent(popup);
+}
+
+
+    function drawUserDistanceLine(){
+      if (userDistanceLine) { map.removeLayer(userDistanceLine); userDistanceLine=null; }
+      if (!searchMarker || !lastEpicenter) return;
+      const u = searchMarker.getLatLng();
+      userDistanceLine = L.polyline([ [u.lat,u.lng], [lastEpicenter[0],lastEpicenter[1]] ],
+        { color:"#ff0080", weight:3, dashArray:"8 8", opacity:.95, lineCap:"round", zIndex:9999 }).addTo(map);
+    }
+
+    /* ---------------- Search & Autocomplete ---------------- */
+    const acList = document.getElementById('acList');
+    const searchInput = document.getElementById('searchInput');
+    let acResults = []; let acSelected = -1;
+
+    const debounce = (fn, wait=350)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); }; };
+    const debouncedSearch = debounce(() => doSearch(searchInput.value.trim()), 350);
+    const showAC = show => acList.style.display = (show && acResults.length) ? 'block' : 'none';
+
+    async function queryNominatim(q, limit = 6) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&accept-language=th&limit=${limit}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Nominatim error ' + res.status);
+      return await res.json();
+    }
+    async function queryPhoton(q, limit = 6) {
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lang=th&limit=${limit}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Photon error ' + res.status);
+      const data = await res.json();
+      return (data.features || []).map(f => ({
+        lat: f.geometry.coordinates[1],
+        lon: f.geometry.coordinates[0],
+        display_name: f.properties.name
+          ? `${f.properties.name}${f.properties.city ? ', '+f.properties.city : ''}${f.properties.country ? ', '+f.properties.country : ''}`
+          : (f.properties.city || f.properties.country || '')
+      }));
+    }
+
+    async function doSearch(q){
+      if (!q) { showAC(false); return; }
+      try {
+        toast('ค้นหา "' + q + '" ...');
+        let results = [];
+        try { results = await queryNominatim(q, 8); }
+        catch(e) { results = await queryPhoton(q, 8); }
+        acResults = results; acSelected = -1;
+        acList.innerHTML = results.map((it, idx) => {
+          const display = it.display_name || it.name || '';
+          const parts = display.split(',');
+          const main = _esc((parts[0] || '').trim() || '(ไม่ทราบชื่อ)');
+          const sub = _esc(parts.slice(1).join(',').trim());
+          return `<li data-idx="${idx}"><span class="ac-main">${main}</span><span class="ac-sub">${sub ? ', '+sub : ''}</span></li>`;
+        }).join('');
+        showAC(true);
+      } catch (e) {
+        console.error(e);
+        toast('ค้นหาล้มเหลว: ' + (e.message || e), true);
+        showAC(false);
+      }
+    }
+
+    function updateACActive() {
+      Array.from(acList.children).forEach((li, i) => li.classList.toggle('active', i === acSelected));
+    }
+    function selectAC(idx) {
+      const it = acResults[idx]; if (!it) return;
+      showAC(false); acResults = []; acSelected = -1; searchInput.value = '';
+      const lat = parseFloat(it.lat), lon = parseFloat(it.lon);
+      const display = it.display_name || '';
+      if (searchMarker) map.removeLayer(searchMarker);
+      const title = display + (currentNickname ? ` <br><small>(ฉัน: ${_esc(currentNickname)})</small>` : '');
+      searchMarker = L.marker([lat, lon], { title, icon: blueIcon }).addTo(map);
+      searchMarker.bindPopup(title, { maxWidth: 320, autoPan: true }).openPopup();
+      map.flyTo([lat, lon], 13, { duration: 0.6 });
+      toast('ค้นหาสำเร็จ: ' + (display || `(${lat.toFixed(5)}, ${lon.toFixed(5)})`));
+      updateUserMarkerPopup(); refreshSoilForMarker(); drawUserDistanceLine(); saveMyPin(lat, lon, display);
+    }
+
+    let searching=false;
+    document.getElementById('searchBtn').addEventListener('click', async () => {
+      if (searching) return;
+      const q = searchInput.value.trim(); if (!q) return;
+      try { searching = true; await doSearch(q); if (acResults.length) selectAC(0); }
+      finally { searching = false; }
+    });
+    acList.addEventListener('mousedown', e => {
+      let li = e.target; while (li && li.tagName !== 'LI') li = li.parentElement;
+      if (li) selectAC(+li.getAttribute('data-idx'));
+    });
+    document.addEventListener('mousedown', e => { if (!acList.contains(e.target) && e.target !== searchInput) showAC(false); });
+    searchInput.addEventListener('input', () => { if (searchInput.value.trim()) debouncedSearch(); else showAC(false); });
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); if (acSelected >= 0) selectAC(acSelected); else if (acResults.length) selectAC(0); else doSearch(searchInput.value.trim()).then(()=>{ if (acResults.length) selectAC(0); }); }
+      else if (e.key === 'ArrowDown') { if (acResults.length) { acSelected = Math.min(acSelected + 1, acResults.length - 1); updateACActive(); showAC(true); } e.preventDefault(); }
+      else if (e.key === 'ArrowUp')   { if (acResults.length) { acSelected = Math.max(acSelected - 1, 0); updateACActive(); showAC(true); } e.preventDefault(); }
+      else if (e.key === 'Escape') showAC(false);
+    });
+
+    /* ---------------- Locate & Click ---------------- */
+    let locateCooldown=false;
+
+    // 🔖 โหมดเลือกพิกัดครั้งเดียวสำหรับโมดอลจำลอง
+    window.__simPickOnce = false;
+
+    async function locateMe(){
+      if (locateCooldown) return; locateCooldown=true; setTimeout(()=>locateCooldown=false, 2000);
+      toast('กำลังค้นหาตำแหน่งของคุณ...');
+      if (!navigator.geolocation) return toast('เบราว์เซอร์ไม่รองรับการหาตำแหน่ง', true);
+      navigator.geolocation.getCurrentPosition(async pos=>{
+        const { latitude, longitude } = pos.coords;
+        try{
+          const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&accept-language=th&zoom=12&addressdetails=1`;
+          const res = await fetch(url); const data = await res.json();
+          const display = data.display_name || 'ตำแหน่งของฉัน';
+          if (searchMarker) map.removeLayer(searchMarker);
+          const title = display + (currentNickname ? ` <br><small>(ฉัน: ${_esc(currentNickname)})</small>` : '');
+          searchMarker = L.marker([latitude,longitude], { title, icon: blueIcon }).addTo(map);
+          searchMarker.bindPopup(title, { maxWidth:320, autoPan:true }).openPopup();
+          map.flyTo([latitude, longitude], 13, { duration: 0.6 });
+          toast('แสดงตำแหน่งของคุณแล้ว');
+          updateUserMarkerPopup(); refreshSoilForMarker(); drawUserDistanceLine(); saveMyPin(latitude, longitude, display);
+        }catch(err){ toast('ไม่สามารถค้นหาชื่อสถานที่: '+(err.message||err), true); }
+      }, err=>toast('ไม่สามารถหาตำแหน่ง: '+err.message, true));
+    }
+    document.getElementById('locateBtn').addEventListener('click', locateMe);
+
+        map.on('click', async e => {
+          const { lat, lng } = e.latlng;
+
+          if (window.__simPickOnce) {
+            window.__simPickOnce = false;
+            document.body.classList.remove('sim-pick-mode');
+
+            const simLatEl = document.getElementById('simLat');
+            const simLonEl = document.getElementById('simLon');
+
+            if (simLatEl && simLonEl) {
+              simLatEl.value = lat.toFixed(6);
+              simLonEl.value = lng.toFixed(6);
+            }
+
+            toast('เลือกพิกัดสำหรับจำลองแล้ว');
+            const modal = document.getElementById('simulateModal');
+            if (modal) modal.style.display = 'flex';
+            return;
+          }
+      // โหมดคลิกปักหมุดปกติ
+      toast('กำลังค้นหาชื่อสถานที่...');
+      try{
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=th&zoom=12&addressdetails=1`;
+        const res = await fetch(url); const data = await res.json();
+        const display = data.display_name || `(${lat.toFixed(5)}, ${lng.toFixed(5)})`;
+        if (searchMarker) map.removeLayer(searchMarker);
+        const title = display + (currentNickname ? ` <br><small>(ฉัน: ${_esc(currentNickname)})</small>` : '');
+        searchMarker = L.marker([lat,lng], { title, icon: blueIcon }).addTo(map);
+        searchMarker.bindPopup(title, { maxWidth:320, autoPan:true }).openPopup();
+        toast('เลือกตำแหน่งแล้ว');
+        updateUserMarkerPopup(); refreshSoilForMarker(); drawUserDistanceLine(); saveMyPin(lat, lng, display);
+      }catch(err){ toast('ไม่สามารถค้นหาชื่อสถานที่: '+(err.message||err), true); }
+    });
+
+    map.on('popupopen', (e)=>{ if (searchMarker && e.popup === searchMarker.getPopup()) updateUserMarkerPopup(); });
+
+    function updatePGAVisibility(){
+      const has = map.hasLayer(pgaImageGroup);
+      if (!has){ if (overlayLayer) pgaImageGroup.removeLayer(overlayLayer), overlayLayer=null; }
+      else{ if (!overlayLayer && lastPGAData){ overlayLayer = L.imageOverlay(lastPGAData.image_data_url, lastPGAData.bounds, { opacity:.75 }); pgaImageGroup.addLayer(overlayLayer); } }
+    }
+    map.on('overlayadd overlayremove', e=>{ if (e.layer === pgaImageGroup) updatePGAVisibility(); });
+    
+
+    function setLegendVisible(show){ document.getElementById('legend').style.display = show ? 'block' : 'none'; }
+    map.on('overlayadd',   e => { if (e.layer === legendLayer) setLegendVisible(true);  });
+    map.on('overlayremove',e => { if (e.layer === legendLayer) setLegendVisible(false); });
+
+    function renderLegend(legend){
+      currentLegend = legend;
+      const box = document.getElementById('legend');
+      if(!legend){ box.style.display = 'none'; return; }
+
+      const bar = box.querySelector('.legend-bar');
+      const labels = box.querySelector('.legend-labels');
+      const title = box.querySelector('.legend-title');
+      title.textContent = `PGA (${legend.units||'%g'})`;
+
+      // โหมดขั้นสี: ใช้ bounds + colors สร้าง hard-steps
+      if (legend.mode === 'discrete' && Array.isArray(legend.bounds) && Array.isArray(legend.colors)) {
+        const min = legend.min, max = legend.max;
+        const bounds = legend.bounds.slice(0, -1); // ตัด inf ตัวท้าย
+        const colors = legend.colors;
+
+        // คำนวณตำแหน่ง (%) ของแต่ละขอบ
+        const pos = bounds.map(v => ((v - min) / (max - min)) * 100);
+
+        // สร้าง CSS gradient แบบขั้น: สี i ตั้งแต่ pos[i] ถึง pos[i+1]
+        const parts = [];
+        for (let i=0; i<colors.length; i++){
+          const p0 = Math.max(0, Math.min(100, pos[i] || 0));
+          const p1 = Math.max(0, Math.min(100, pos[i+1] ?? 100));
+          parts.push(`${colors[i]} ${p0}%`, `${colors[i]} ${p1}%`);
+        }
+        bar.style.background = `linear-gradient(to right, ${parts.join(', ')})`;
+
+        // ป้ายหัวท้าย (เอา min/max)
+        labels.innerHTML = `<span><strong>${min}</strong></span><span><strong>${max}</strong></span>`;
+        box.style.display = 'block';
+        return;
+      }
+
+      // โหมดเดิม (gradient ลื่น ๆ ตาม stops)
+      if(!legend.stops || !legend.stops.length){ box.style.display = 'none'; return; }
+      const grad = legend.stops.map((s,i)=>`${s.color} ${(i/(legend.stops.length-1))*100}%`).join(', ');
+      bar.style.background = `linear-gradient(to right, ${grad})`;
+      labels.innerHTML = `<span><strong>${legend.min.toFixed(0)}</strong></span><span><strong>${legend.max.toFixed(4)}</strong></span>`;
+      box.style.display = 'block';
+    }
+
+    /* ---------------- Firebase Pins + Nickname ---------------- */
+    const firebaseConfig = {
+      apiKey: "AIzaSyB3hdNequpq1BUT9Bzg-HobLCTtdRDTAEA",
+      authDomain: "shakemap-d69a8.firebaseapp.com",
+      projectId: "shakemap-d69a8",
+      storageBucket: "shakemap-d69a8.firebasestorage.app",
+      messagingSenderId: "626217349401",
+      appId: "1:626217349401:web:332f3dcc26af9dd8e49588",
+      measurementId: "G-JH9E5GM3EX"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth(); const db = firebase.firestore();
+    let currentUser=null; const othersMarkers=new Map();
+
+    auth.signInAnonymously().catch(console.error);
+    auth.onAuthStateChanged(u => { currentUser = u || null; if (currentUser) subscribePins(); });
+
+    (() => {
+      const OPS_CODE='123456', OPS_TTL_MS=60*1000, LS_KEY='opsModeUntil', q=new URLSearchParams(location.search);
+      function setOpsMode(on){ on ? localStorage.setItem(LS_KEY, String(Date.now()+OPS_TTL_MS)) : localStorage.removeItem(LS_KEY); document.body.classList.toggle('ops-mode', on); }
+      function isOpsMode(){ const exp=+localStorage.getItem(LS_KEY)||0; if(exp && Date.now()<exp) return true; localStorage.removeItem(LS_KEY); return false; }
+      function askCode(){ const code=prompt('รหัสสำหรับโหมดลับ:'); if(!code) return false; if(code===OPS_CODE){ setOpsMode(true); toast('เปิดโหมดลับแล้ว'); return true; } toast('รหัสไม่ถูกต้อง', true); return false; }
+      if (q.get('ops')==='1'){ setOpsMode(true); history.replaceState({}, '', location.pathname + location.hash); } else { setOpsMode(isOpsMode()); }
+      document.addEventListener('keydown', e=>{ if (e.altKey && e.shiftKey && e.code==='KeyO'){ e.preventDefault(); askCode(); } });
+      let taps=0,last=0; document.addEventListener('click', e=>{ const inTopRight = e.clientX>(innerWidth-120)&&e.clientY<120; if(!inTopRight) return; const now=Date.now(); taps = (now-last<600)?taps+1:1; last=now; if(taps>=5){ taps=0; askCode(); } });
+      window.exitOpsMode=()=>setOpsMode(false);
+    })();
+
+﻿    let currentNickname='';
+    function loadNickname(){ try{ currentNickname = localStorage.getItem('nick') || ''; }catch(e){ currentNickname=''; } }
+    function saveNickname(nick){
+      currentNickname=(nick||'').trim();
+      try{ localStorage.setItem('nick', currentNickname); }catch(e){}
+      toast(currentNickname ? `บันทึกชื่อเล่น: ${currentNickname}` : 'ลบชื่อเล่นแล้ว');
+    }
+    window.addEventListener('DOMContentLoaded', () => { loadNickname(); });
+
+    function colorFromUid(uid){ let h=0; for(let i=0;i<uid.length;i++) h=(h*31 + uid.charCodeAt(i))>>>0; const hue=h%360; return `hsl(${hue} 90% 45%)`; }
+    function makeCircleMarker(lat, lon, options={}){ return L.circleMarker([lat, lon], Object.assign({ radius:7, weight:2, fillOpacity:.9, opacity:1, pane:'pinsPane' }, options)); }
+
+    async function saveMyPin(lat, lon, label){
+      try{
+        if (!currentUser) throw new Error('ยังไม่ได้เชื่อมต่อบัญชี (Anonymous Auth)');
+
+        let needs = [];
+        try{
+          const profile = JSON.parse(localStorage.getItem('shakemapProfile')||'{}');
+          if (Array.isArray(profile.needs)) needs = profile.needs;
+        }catch(e){}
+
+        await db.collection('pins').doc(currentUser.uid).set({
+          uid: currentUser.uid, nick: currentNickname || '', label, lat, lon,
+          needs,
+          ts: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }catch(e){
+        console.error('saveMyPin error:', e.code, e.message);
+        toast('บันทึกหมุดไม่สำเร็จ: ' + (e.message || e), true);
+      }
+    }
+
+    function subscribePins(){
+      db.collection('pins').orderBy('ts', 'desc').onSnapshot(snap=>{
+        const seen = new Set();
+        snap.forEach(doc=>{
+          const id=doc.id, d=doc.data(); seen.add(id);
+          const color=colorFromUid(d.uid||id);
+          const owner=(d.nick||'').trim()?_esc(d.nick.trim()):String(d.uid||id).slice(0,8);
+          let html = `<div style="font-weight:700">${_esc(d.label||'ตำแหน่งที่เลือก')}</div>
+            <div>Lat ${(+d.lat).toFixed(5)}, Lon ${(+d.lon).toFixed(5)}</div>
+            <div style="margin-top:4px;font-size:12px;opacity:.8">โดย: ${owner}</div>`;
+
+          if (Array.isArray(d.needs) && d.needs.length){
+            const chips = d.needs.map(v=>`<span class="need-chip">${needLabel(v)}</span>`).join(' ');
+            html += `<div style="margin-top:6px">ต้องการความช่วยเหลือ : ${chips}</div>`;
+          }
+
+          let mk=othersMarkers.get(id);
+          if(!mk){ mk = makeCircleMarker(d.lat,d.lon,{ color, fillColor: color }); mk.bindPopup(html, { maxWidth:280, autoPan:true }); othersPinsGroup.addLayer(mk); othersMarkers.set(id,mk); }
+          else{ mk.setLatLng([d.lat,d.lon]); mk.setStyle({ color, fillColor: color }); mk.getPopup()?.setContent(html); }
+        });
+        for (const [id, mk] of othersMarkers){ if (!seen.has(id)){ othersPinsGroup.removeLayer(mk); othersMarkers.delete(id); } }
+      }, err=>{ console.error(err); toast('อ่านหมุดไม่สำเร็จ: '+(err.message||err), true); });
+    }
+
+    /* ===== Nickname: Chip + Modal ===== */
+    window.addEventListener('DOMContentLoaded', () => {
+      const chip      = document.getElementById('nickChip');
+      const chipLabel = document.getElementById('nickChipLabel');
+      const modal     = document.getElementById('nickModal');
+      const form      = document.getElementById('nickForm');
+      const input     = document.getElementById('nickModalInput');
+      const btnCancel = document.getElementById('nickCancel');
+      const btnCloseX = document.getElementById('nickCloseX');
+
+      function refreshChip(){
+        chipLabel.textContent = (currentNickname && currentNickname.trim())
+          ? `ฉัน: ${currentNickname.trim()}`
+          : 'SOS';
+      }
+      function showNickModal(show=true){
+        if (!modal) return;
+        if (show){
+          input.value = currentNickname || '';
+          modal.style.display = 'flex';
+          setTimeout(()=>input?.focus(), 30);
+        }else{
+          modal.style.display = 'none';
+        }
+      }
+
+      chip?.addEventListener('click', () => showNickModal(true));
+      btnCancel?.addEventListener('click', () => showNickModal(false));
+      btnCloseX?.addEventListener('click', () => showNickModal(false));
+      modal?.addEventListener('click', (e)=>{ if(e.target===modal) showNickModal(false); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal?.style.display === 'flex') showNickModal(false);
+      });
+
+      form?.addEventListener('submit', (e)=>{
+        e.preventDefault();
+        const v = (input.value || '').trim();
+        saveNickname(v);
+        saveNicknameAndNeeds();
+        refreshChip();
+        showNickModal(false);
+      });
+
+      refreshChip();
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+  const modalEl = document.getElementById('simulateModal');
+  const runBtn = document.getElementById('runBtn');
+  const simForm = document.getElementById('simulateForm');
+  const simLat = document.getElementById('simLat');
+  const simLon = document.getElementById('simLon');
+  const simDepth = document.getElementById('simDepth');
+  const simMag = document.getElementById('simMag');
+  const simCancel = document.getElementById('simCancel');
+  const simCloseX = document.getElementById('simCloseX');
+  const simPickBtn = document.getElementById('simPickBtn');
+
+  function showSimModal(show = true){
+  if (!modalEl) return;
+  modalEl.style.display = show ? 'flex' : 'none';
+
+  if (show) {
+    document.body.classList.remove('sim-pick-mode');
+  }
+
+  // ตอนปิด modal ห้ามล้าง __simPickOnce ที่นี่
+  // เพราะเราจะปิด modal ชั่วคราวเพื่อไปคลิกเลือกพิกัดบนแผนที่
+}
+  function setRunBtnBusy(running){
+    if (!runBtn) return;
+    runBtn.disabled = !!running;
+    runBtn.innerHTML = `<i class="fa-solid fa-wave-square" aria-hidden="true"></i>`;
+  }
+
+  async function simulateCompute(lat, lon, depth, mag){
+    setRunBtnBusy(true);
+    toast('กำลังคำนวณเหตุการณ์จำลอง...');
+
+    try {
+      resetLatest();
+
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          lat: lat,
+          lon: lon,
+          depth: depth,
+          mag: mag
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error((await res.text()) || ('HTTP ' + res.status));
+      }
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      renderLegend(data.legend);
+      if (!map.hasLayer(legendLayer)) legendLayer.addTo(map);
+      setLegendVisible(true);
+
+      const { bounds, epicenter, image_data_url, popup_html, meta, pga_points } = data;
+
+      lastPGAGrid = Array.isArray(pga_points) ? pga_points : [];
+
+      overlayLayer = L.imageOverlay(image_data_url, bounds, { opacity: 0.75 });
+      pgaImageGroup.addLayer(overlayLayer);
+
+      epicenterMarker = L.marker(epicenter, { title:'Epicenter', icon:redIcon });
+      if (popup_html) epicenterMarker.bindPopup(popup_html, { maxWidth:320, autoPan:true });
+      epicenterGroup.addLayer(epicenterMarker);
+      if (popup_html) epicenterMarker.openPopup();
+
+      map.fitBounds(bounds, { padding:[20,20] });
+      const MIN_ZOOM_ON_EVENT = 12;
+      const fitZ = map.getBoundsZoom(L.latLngBounds(bounds), true);
+      const targetZ = Math.max(fitZ + 1, MIN_ZOOM_ON_EVENT);
+      map.flyTo(epicenter, targetZ, { duration: 0.6 });
+
+      lastEpicenter = epicenter;
+      lastPGAData = { bounds, epicenter, image_data_url, popup_html, meta };
+
+      toast(`สำเร็จ: จำลอง Mw ${meta?.mag ?? mag}, depth ${meta?.depth_km ?? depth} km`);
+      updateUserMarkerPopup();
+      refreshSoilForMarker();
+      drawUserDistanceLine();
+
+    } catch (err) {
+      console.error(err);
+      toast('คำนวณเหตุการณ์จำลองล้มเหลว: ' + (err.message || err), true);
+    } finally {
+      setRunBtnBusy(false);
+    }
+  }
+
+  runBtn?.addEventListener('click', () => showSimModal(true));
+  simCancel?.addEventListener('click', () => showSimModal(false));
+  simCloseX?.addEventListener('click', () => showSimModal(false));
+  modalEl?.addEventListener('click', e => { if (e.target === modalEl) showSimModal(false); });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalEl?.style.display === 'flex') showSimModal(false);
+  });
+
+  simPickBtn?.addEventListener('click', () => {
+  window.__simPickOnce = true;
+  document.body.classList.add('sim-pick-mode');
+  modalEl.style.display = 'none';
+  toast('โหมดเลือกพิกัด: คลิกบนแผนที่ 1 ครั้ง');
+});
+  
+
+  simForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    const lat = parseFloat(simLat.value);
+    const lon = parseFloat(simLon.value);
+    const depth = parseFloat(simDepth.value);
+    const mag = parseFloat(simMag.value);
+
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      return toast('Latitude ไม่ถูกต้อง', true);
+    }
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+      return toast('Longitude ไม่ถูกต้อง', true);
+    }
+    if (!Number.isFinite(depth) || depth < 0 || depth > 700) {
+      return toast('Depth 0–700 km เท่านั้น', true);
+    }
+    if (!Number.isFinite(mag) || mag < 1 || mag > 10) {
+      return toast('Magnitude 1.0–10.0 เท่านั้น', true);
+    }
+
+    showSimModal(false);
+    simulateCompute(lat, lon, depth, mag);
+  });
+});
+    /* ====== Clear Pins ====== */
+    (function(){
+      const CLEAR_CODE="123456";
+      const modal=document.getElementById('clearPinsModal');
+      const form=document.getElementById('clearPinsForm');
+      const input=document.getElementById('clearCodeInput');
+      const btn=document.getElementById('clearPinsBtn');
+      const btnCancel=document.getElementById('clearCancel');
+
+      function showClearModal(show=true){ if(!modal) return; modal.style.display = show ? 'flex' : 'none'; if (show){ input.value=""; setTimeout(()=>input?.focus(), 50); } }
+
+      async function deletePinsBatch(limit=300){
+        const FieldPath=firebase.firestore.FieldPath;
+        const snap=await db.collection('pins').orderBy(FieldPath.documentId()).limit(limit).get();
+        if (snap.empty) return 0;
+        const batch=db.batch(); snap.forEach(doc=>batch.delete(doc.ref)); await batch.commit(); return snap.size;
+      }
+      async function clearAllPins(){
+        btn.disabled=true; toast('กำลังลบ Pins ทั้งหมด…');
+        let total=0, removed;
+        try{ do{ removed=await deletePinsBatch(300); total+=removed; }while(removed>0);
+             toast(`ลบ Pins ทั้งหมดสำเร็จ (${total} รายการ)`); }
+        catch(e){ console.error(e); toast('ลบ Pins ไม่สำเร็จ: ' + (e.message || e), true); }
+        finally{ btn.disabled=false; }
+      }
+
+      btn?.addEventListener('click', ()=> showClearModal(true));
+      btnCancel?.addEventListener('click', ()=> showClearModal(false));
+      modal?.addEventListener('click', e=>{ if (e.target===modal) showClearModal(false); });
+      form?.addEventListener('submit', async e=>{
+        e.preventDefault();
+        const code=(input.value||"").trim();
+        if(!code) return toast('กรุณากรอกรหัส', true);
+        if(code!==CLEAR_CODE) return toast('รหัสไม่ถูกต้อง', true);
+        showClearModal(false); await clearAllPins();
+      });
+    })();
+
+    /* ====== Modal รายละเอียด MMI ====== */
+    function showMMIDetail(code, pgaVal){
+      const idx = MMI_CODES.indexOf(code);
+      if (idx < 0) return false;
+
+      const m = {
+        code,
+        color: MMI_COLORS[idx],
+        shake: TH_SHAKING[idx],
+        damage: TH_DAMAGE[idx],
+        advice: MMI_ADVICE[code] || "-",
+        range: (function(){
+          const lower = idx === 0 ? 0 : PGA_THRESH[idx-1];
+          const upper = idx < PGA_THRESH.length ? PGA_THRESH[idx] : Infinity;
+          return idx === 0 ? `< ${PGA_THRESH[0]}%g` : (upper===Infinity ? `≥ ${lower}%g` : `${lower}–${upper}%g`);
+        })()
+      };
+
+      const modal = document.getElementById('mmiModal');
+      const badge = document.getElementById('mmiBadge');
+      document.getElementById('mmiModalTitle').textContent = `รายละเอียดความรุนแรง (MMI ${m.code})`;
+      badge.style.background = m.color;
+      badge.textContent = `MMI ${m.code}`;
+      document.getElementById('mmiDesc').textContent   = `ความรู้สึก: ${m.shake}`;
+      document.getElementById('mmiDamage').textContent = `ความเสียหายโดยทั่วไป: ${m.damage}`;
+      document.getElementById('mmiAdvice').innerHTML   = `<b>คำแนะนำ:</b> ${_esc(m.advice)}`;
+
+      modal.style.display = 'flex';
+      function close(){ modal.style.display='none'; modal.removeEventListener('click', onBack); closeBtn.removeEventListener('click', close); }
+      function onBack(e){ if (e.target === modal) close(); }
+      const closeBtn = document.getElementById('mmiClose');
+      modal.addEventListener('click', onBack);
+      closeBtn.addEventListener('click', close);
+
+      return false;
+    }
+
+    // ====== Toggle ถาดปุ่มมุมขวา (พับ/กาง + จำสถานะ) ======
+    window.addEventListener('DOMContentLoaded', () => {
+      const tray = document.querySelector('.top-right-buttons');
+      const toggle = document.getElementById('trayToggle');
+
+      function setCollapsed(c){
+        tray.classList.toggle('collapsed', c);
+        toggle.setAttribute('aria-expanded', String(!c));
+        toggle.title = c ? 'แสดงเมนู' : 'ซ่อนเมนู';
+        toggle.innerHTML = c
+          ? '<i class="fa-solid fa-chevron-left"></i>'
+          : '<i class="fa-solid fa-chevron-right"></i>';
+        try{ localStorage.setItem('trayCollapsed', c ? '1' : '0'); }catch(e){}
+      }
+
+      const initCollapsed = (localStorage.getItem('trayCollapsed') === '1');
+      setCollapsed(initCollapsed);
+      toggle?.addEventListener('click', () => setCollapsed(!tray.classList.contains('collapsed')));
+    });
+
+    // ================= Queue Control (จำกัดคนใช้งานพร้อมกัน) =================
+    (function(){
+      const ENTER_URL = "/api/queue/enter";
+      const STATUS_URL = "/api/queue/status";
+      const HEARTBEAT_URL = "/api/queue/heartbeat";
+      const LEAVE_URL = "/api/queue/leave";
+
+      // gen ids
+      function uuid(){ return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c=>(c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16) ); }
+      function getClientId(){ try{ let id=localStorage.getItem('clientId'); if(!id){ id=uuid(); localStorage.setItem('clientId', id); } return id; }catch(e){ return uuid(); } }
+      function getTabId(){ try{ let id=sessionStorage.getItem('tabId'); if(!id){ id=uuid(); sessionStorage.setItem('tabId', id); } return id; }catch(e){ return uuid(); } }
+
+      const clientId = getClientId();
+      const tabId = getTabId();
+
+      const modal = document.getElementById('queueModal');
+      const txt   = document.getElementById('queueText');
+      const posEl = document.getElementById('queuePosition');
+      const leaveBtn = document.getElementById('queueLeave');
+      const qActiveEl = document.getElementById('qActive');
+      const qLimitEl  = document.getElementById('qLimit');
+
+      let hbTimer=null, stTimer=null;
+      let inQueue=false, isActive=false;
+
+      function showQueueModal(show=true){
+        if(!modal) return;
+        modal.style.display = show ? 'flex' : 'none';
+        document.body.classList.toggle('queue-wait', show);
+      }
+
+      async function apiPost(url, payload){
+        const res = await fetch(url, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify(payload||{})
+        });
+        return await res.json();
+      }
+      async function apiGet(url, params){
+        const qs = new URLSearchParams(params||{}).toString();
+        const res = await fetch(qs ? (url + "?" + qs) : url);
+        return await res.json();
+      }
+
+      function renderQueueUI(state){
+        if (qActiveEl && typeof state.active==='number') qActiveEl.textContent = String(state.active);
+        if (qLimitEl && typeof state.limit==='number')   qLimitEl.textContent  = String(state.limit);
+        if (state.position && posEl) posEl.textContent = `#${state.position}`;
+      }
+
+      function handleState(data){
+        renderQueueUI(data||{});
+        if(data?.state === 'active'){
+          inQueue=false; isActive=true; showQueueModal(false);
+          if(!hbTimer) heartbeatLoop();
+        }else if(data?.state === 'queued'){
+          inQueue=true; isActive=false;
+          txt.textContent = `ตอนนี้มีคนใช้งานครบ ${data.limit||'-'} คน กำลังรอคิว...`;
+          if (posEl && data.position) posEl.textContent = `#${data.position}`;
+          showQueueModal(true);
+          if(!stTimer) statusLoop();
+        }else{
+          inQueue=false; isActive=false;
+          setTimeout(enter, 1000);
+        }
+      }
+
+      async function enter(){
+        try{ const d = await apiPost(ENTER_URL, { client_id: clientId, tab_id: tabId }); handleState(d); }
+        catch(e){ console.error('enter error:', e); }
+      }
+      async function statusLoop(){
+        clearTimeout(stTimer);
+        try{ const d = await apiGet(STATUS_URL, { client_id: clientId, tab_id: tabId }); handleState(d); }
+        catch(e){ console.error('status error:', e); }
+        finally{ if(inQueue) stTimer = setTimeout(statusLoop, 3000); }
+      }
+      async function heartbeatLoop(){
+        clearTimeout(hbTimer);
+        try{ const d = await apiPost(HEARTBEAT_URL, { client_id: clientId, tab_id: tabId }); handleState(d); }
+        catch(e){ console.error('heartbeat error:', e); }
+        finally{ hbTimer = setTimeout(heartbeatLoop, 20000); }
+      }
+      function leave(){
+        try{
+          navigator.sendBeacon(LEAVE_URL, new Blob([JSON.stringify({ client_id: clientId, tab_id: tabId })], { type: 'application/json' }));
+        }catch(e){}
+      }
+      leaveBtn?.addEventListener('click', () => {
+        leave();
+        try { window.close(); } catch(e) {}
+        try {
+          window.opener = null;
+          window.open('', '_self');
+          window.close();
+        } catch(e) {}
+        setTimeout(() => {
+          try { window.location.replace('about:blank'); } catch(e) {}
+          setTimeout(() => { try { window.close(); } catch(e) {} }, 50);
+        }, 10);
+      });
+
+      window.addEventListener('beforeunload', leave);
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState === 'visible'){
+          if(isActive){ heartbeatLoop(); }
+          else if(inQueue){ statusLoop(); }
+        }
+      });
+
+      window.addEventListener('DOMContentLoaded', () => { enter(); });
+    })();
+
+    
+    // === Modal แสดงตาราง MMI–PGA ===
+    document.addEventListener('DOMContentLoaded', () => {
+      const legendBar = document.querySelector('.legend-bar');
+      const modal = document.getElementById('mmiTableModal');
+      const closeX = document.getElementById('mmiTableClose');
+      const closeBtn = document.getElementById('mmiTableCloseBtn');
+
+      if (legendBar) {
+        legendBar.style.cursor = 'pointer';
+        legendBar.title = 'คลิกเพื่อดูตาราง MMI–PGA';
+        legendBar.addEventListener('click', () => {
+          modal.style.display = 'flex';
+        });
+      }
+
+      [closeX, closeBtn].forEach(btn =>
+        btn?.addEventListener('click', () => modal.style.display = 'none')
+      );
+
+      modal.addEventListener('click', e => {
+        if (e.target === modal) modal.style.display = 'none';
+      });
+    });
+
+async function predictMMI(dist, pga, mag, lat=null, lon=null){
+  const payload = { dist, pga, mag };
+  if(lat !== null) payload.lat = lat;
+  if(lon !== null) payload.lon = lon;
+
+  const res = await fetch('/api/predict_mmi', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if(!res.ok) throw new Error(data.error || 'predict failed');
+  return data;
+}
+
+  </script>
+  <!-- Modal: ตาราง MMI–PGA -->
+    <div id="mmiTableModal" class="modal-backdrop" style="display:none">
+      <div class="modal" style="max-width:600px">
+        <button type="button" id="mmiTableClose" class="modal-close" aria-label="ปิด">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+        <h3 class="modal-title">ตารางความสัมพันธ์ระหว่าง MMI และ PGA</h3>
+        <div class="modal-body" style="text-align:center">
+          <!-- แสดงรูปที่คุณให้มา -->
+          <img src="/static/mmi_pga_table.png" alt="MMI–PGA Table"
+              style="max-width:100%; border-radius:8px; box-shadow:0 0 6px rgba(0,0,0,.15)">
+          <p style="margin-top:8px; font-size:13px; color:#555">
+            ที่มา: USGS Standard Conversion (MMI–PGA)
+          </p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="mmiTableCloseBtn" class="btn-primary">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "n_rows": 587,
+  "raw_columns": [
+    "lat",
+    "lon",
+    "dist ",
+    "pga ",
+    "mmi",
+    "mag",
+    "source_file",
+    "pga",
+    "dist",
+    "Unnamed: 5",
+    "lat ",
+    3.5
+  ],
+  "feature_columns_raw": [
+    "dist",
+    "pga",
+    "mag",
+    "lat",
+    "lon"
+  ],
+  "feature_columns_engineered": [
+    "dist",
+    "pga",
+    "log_dist",
+    "log_pga",
+    "inv_dist",
+    "dist_sq",
+    "log_dist_sq",
+    "pga_over_dist",
+    "mag",
+    "mag_x_log_dist",
+    "mag_x_log_pga",
+    "mag_over_log_dist1p",
+    "lat",
+    "lon",
+    "lat_lon"
+  ],
+  "model_name": "rf",
+  "cv_strategy": "LeaveOneOut",
+  "cv_mae": 0.6278800279788355,
+  "cv_rmse": 0.8159960372508676,
+  "cv_accuracy_pm1": 0.9148211243611585,
+  "cv_accuracy_exact": 0.4804088586030664,
+  "note": "Dataset is very small, so metrics are unstable and only for rough inspection."
+}
