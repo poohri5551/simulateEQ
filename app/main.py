@@ -18,7 +18,7 @@ import os
 
 GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "1n6Q5kY7AG3d1bf4C6RIhh4JNao2JubObIeZAKaOoiJc")
 GOOGLE_SHEETS_RANGE = os.getenv("GOOGLE_SHEETS_RANGE", "MMIReports!A:Q")
-GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", r"c:\project\secret\focal-sight-490506-e2-e0cd6f286f88.json")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "/etc/secrets/google-service-account.json")
 
 class MMIReportRequest(BaseModel):
     user_uid: str | None = None
